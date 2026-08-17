@@ -143,6 +143,11 @@ impl Agent {
                 .then(|| Message::with_timestamps(&messages_with_memory));
             let send_messages = stamped.as_deref().unwrap_or(&messages_with_memory);
             let prompt_has_recent_tool_result = Self::messages_end_with_tool_result(send_messages);
+            let resume_session_id = if self.provider.name() == "openai" {
+                Some(self.session.id.clone())
+            } else {
+                self.provider_session_id.clone()
+            };
             self.last_status_detail = None;
             let mut stream = match self
                 .provider
@@ -151,7 +156,7 @@ impl Agent {
                     &tools,
                     &split_prompt.static_part,
                     &split_prompt.dynamic_part,
-                    self.provider_session_id.as_deref(),
+                    resume_session_id.as_deref(),
                 )
                 .await
             {

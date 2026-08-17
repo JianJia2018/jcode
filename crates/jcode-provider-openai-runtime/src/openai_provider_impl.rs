@@ -10,6 +10,16 @@ fn catalog_error_is_auth_rejection(err: &anyhow::Error) -> bool {
         .is_some_and(|status| status.0 == 401 || status.0 == 403)
 }
 
+fn resolve_prompt_cache_key<'a>(
+    configured: Option<&'a str>,
+    session: Option<&'a str>,
+) -> Option<&'a str> {
+    configured
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .or_else(|| session.map(str::trim).filter(|key| !key.is_empty()))
+}
+
 #[async_trait]
 impl Provider for OpenAIProvider {
     fn reload_credentials(&self) {
@@ -29,7 +39,7 @@ impl Provider for OpenAIProvider {
         messages: &[ChatMessage],
         tools: &[ToolDefinition],
         system: &str,
-        _resume_session_id: Option<&str>,
+        resume_session_id: Option<&str>,
     ) -> Result<EventStream> {
         let selected_model = self.model();
         if is_chatgpt_web_model(&selected_model) {
@@ -73,7 +83,7 @@ impl Provider for OpenAIProvider {
             self.max_output_tokens,
             api_reasoning_effort.as_deref(),
             service_tier.as_deref(),
-            self.prompt_cache_key.as_deref(),
+            resolve_prompt_cache_key(self.prompt_cache_key.as_deref(), resume_session_id),
             self.prompt_cache_retention.as_deref(),
             native_compaction_threshold,
         );
