@@ -303,7 +303,11 @@ impl Agent {
             // model. Compare against this after the stream so we can emit a
             // `ModelChanged` and resync the UI/context-limit.
             let model_at_request_start = provider.model().to_string();
-            let resume_session_id = self.provider_session_id.clone();
+            let resume_session_id = if provider.name() == "OpenAI" {
+                Some(self.session.id.clone())
+            } else {
+                self.provider_session_id.clone()
+            };
             self.last_status_detail = None;
             let kv_request = kv_cache_request_event(
                 &cache_signature_messages,
