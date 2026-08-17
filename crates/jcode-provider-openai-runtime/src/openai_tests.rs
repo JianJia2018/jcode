@@ -1,6 +1,7 @@
 #![allow(clippy::collapsible_match)]
 
 use super::*;
+use crate::openai_provider_impl::resolve_prompt_cache_key;
 use anyhow::Result;
 use futures::{SinkExt, StreamExt};
 use jcode_base::auth::codex::CodexCredentials;
