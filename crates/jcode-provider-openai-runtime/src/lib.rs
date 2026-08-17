@@ -1202,10 +1202,18 @@ impl OpenAIProvider {
         input: &[Value],
         tools: &[ToolDefinition],
         system: &str,
+        resume_session_id: Option<&str>,
     ) -> Value {
         let model_id = self.model_id().await;
         let is_chatgpt_mode = Self::is_chatgpt_mode(&*self.credentials.read().await);
-        self.response_request_for_model(&model_id, input, tools, system, is_chatgpt_mode)
+        self.response_request_for_model(
+            &model_id,
+            input,
+            tools,
+            system,
+            is_chatgpt_mode,
+            resolve_prompt_cache_key(self.prompt_cache_key.as_deref(), resume_session_id),
+        )
     }
 
     fn response_request_for_model(
@@ -1215,6 +1223,7 @@ impl OpenAIProvider {
         tools: &[ToolDefinition],
         system: &str,
         is_chatgpt_mode: bool,
+        prompt_cache_key: Option<&str>,
     ) -> Value {
         let api_tools = build_tools(tools);
         let reasoning_effort = self
@@ -1244,7 +1253,7 @@ impl OpenAIProvider {
             self.max_output_tokens,
             api_reasoning_effort.as_deref(),
             service_tier.as_deref(),
-            self.prompt_cache_key.as_deref(),
+            prompt_cache_key,
             self.prompt_cache_retention.as_deref(),
             native_compaction_threshold,
         )
