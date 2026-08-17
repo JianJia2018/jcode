@@ -10,6 +10,26 @@ fn catalog_error_is_auth_rejection(err: &anyhow::Error) -> bool {
         .is_some_and(|status| status.0 == 401 || status.0 == 403)
 }
 
+pub(crate) fn resolve_prompt_cache_key<'a>(
+    configured: Option<&'a str>,
+    session: Option<&'a str>,
+) -> Option<&'a str> {
+    configured
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .or_else(|| session.map(str::trim).filter(|key| !key.is_empty()))
+}
+
+pub(crate) fn resolve_prompt_cache_key<'a>(
+    configured: Option<&'a str>,
+    session: Option<&'a str>,
+) -> Option<&'a str> {
+    configured
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .or_else(|| session.map(str::trim).filter(|key| !key.is_empty()))
+}
+
 #[async_trait]
 impl Provider for OpenAIProvider {
     fn reload_credentials(&self) {
@@ -64,6 +84,7 @@ impl Provider for OpenAIProvider {
             tools,
             system,
             Self::is_chatgpt_mode(&credentials),
+            resolve_prompt_cache_key(self.prompt_cache_key.as_deref(), None),
         );
         drop(credentials);
         if matches!(mode, OpenAITransportMode::Auto)
@@ -84,7 +105,7 @@ impl Provider for OpenAIProvider {
         messages: &[ChatMessage],
         tools: &[ToolDefinition],
         system: &str,
-        _resume_session_id: Option<&str>,
+        resume_session_id: Option<&str>,
     ) -> Result<EventStream> {
         let selected_model = self.model();
         if is_chatgpt_web_model(&selected_model) {
@@ -95,7 +116,9 @@ impl Provider for OpenAIProvider {
 
         let input = build_responses_input(messages);
         let input_item_count = input.len();
-        let request = self.response_request(&input, tools, system).await;
+        let request = self
+            .response_request(&input, tools, system, resume_session_id)
+            .await;
         let model_id = openai_request_model(&request);
         let is_chatgpt_mode = Self::is_chatgpt_mode(&*self.credentials.read().await);
 

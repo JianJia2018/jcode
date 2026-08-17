@@ -86,6 +86,24 @@ fn build_test_response_request(
 }
 
 #[test]
+fn test_prompt_cache_key_prefers_configured_key_and_falls_back_to_session() {
+    assert_eq!(
+        resolve_prompt_cache_key(Some(" configured-key "), Some("session-id")),
+        Some("configured-key")
+    );
+    assert_eq!(
+        resolve_prompt_cache_key(None, Some(" session-id ")),
+        Some("session-id")
+    );
+    assert_eq!(
+        resolve_prompt_cache_key(Some("   "), Some("session-id")),
+        Some("session-id")
+    );
+    assert_eq!(resolve_prompt_cache_key(Some("  "), Some("  ")), None);
+}
+
+
+#[test]
 fn test_build_responses_input_injects_missing_tool_output() {
     let expected_missing = format!("[Error] {}", TOOL_OUTPUT_MISSING_TEXT);
     let messages = vec![
