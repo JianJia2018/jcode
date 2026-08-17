@@ -309,7 +309,11 @@ impl Agent {
             let credential_at_request_start = provider.active_resolved_credential();
             let oauth_email_at_request_start =
                 crate::server::provider_oauth_email(provider.as_ref());
-            let resume_session_id = self.provider_session_id.clone();
+            let resume_session_id = if provider.name() == "OpenAI" {
+                Some(self.session.id.clone())
+            } else {
+                self.provider_session_id.clone()
+            };
             self.last_status_detail = None;
             let kv_request = kv_cache_request_event(
                 &cache_signature_messages,
