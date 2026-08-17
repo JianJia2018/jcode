@@ -108,7 +108,11 @@ impl App {
             } else {
                 provider_messages
             };
-            let session_id_clone = self.provider_session_id.clone();
+            let session_id_clone = if provider.name() == "openai" {
+                Some(self.session.id.clone())
+            } else {
+                self.provider_session_id.clone()
+            };
             let static_part = split_prompt.static_part.clone();
             let dynamic_part = split_prompt.dynamic_part.clone();
             self.begin_kv_cache_request(&request_messages, &tools, &static_part, &dynamic_part);
