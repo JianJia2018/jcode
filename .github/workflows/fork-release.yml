@@ -1,0 +1,175 @@
+name: Fork release
+
+on:
+  push:
+    tags:
+      - "v*"
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: fork-release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  sync-upstream:
+    name: Sync upstream release
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      release_tag: ${{ steps.sync.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Rebase custom commits onto latest upstream release
+        id: sync
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current_upstream="$(cat .github/upstream-version)"
+          latest_upstream="$(gh api repos/1jehuang/jcode/releases/latest --jq .tag_name)"
+
+          if [ "$current_upstream" = "$latest_upstream" ]; then
+            echo "Already based on $latest_upstream"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          expected_master="$(git rev-parse origin/master)"
+          current_ref="refs/upstream-tags/$current_upstream"
+          latest_ref="refs/upstream-tags/$latest_upstream"
+          git fetch https://github.com/1jehuang/jcode.git "refs/tags/$current_upstream:$current_ref" "refs/tags/$latest_upstream:$latest_ref"
+
+          if ! git rebase --onto "$latest_ref" "$current_ref" master; then
+            conflicts="$(git diff --name-only --diff-filter=U | sort)"
+            expected="$(printf 'Cargo.lock\nCargo.toml')"
+            if [ "$conflicts" != "$expected" ]; then
+              echo "Unexpected rebase conflicts:" >&2
+              printf '%s\n' "$conflicts" >&2
+              git rebase --abort
+              exit 1
+            fi
+            git checkout --ours -- Cargo.toml Cargo.lock
+            git add Cargo.toml Cargo.lock
+            GIT_EDITOR=true git rebase --continue
+          fi
+
+          release_tag="$(python3 - "$latest_upstream" <<'PY'
+          import sys
+          major, minor, patch = map(int, sys.argv[1].removeprefix("v").split("."))
+          print(f"v{major}.{minor}.{patch + 1}")
+          PY
+          )"
+          release_version="${release_tag#v}"
+
+          python3 - "$release_version" "$latest_upstream" <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          version, upstream = sys.argv[1:]
+          cargo_toml = Path("Cargo.toml")
+          text = cargo_toml.read_text(encoding="utf-8")
+          text, count = re.subn(r'(?m)^version = "[^"]+"$', f'version = "{version}"', text, count=1)
+          if count != 1:
+              raise SystemExit("Could not update Cargo.toml package version")
+          cargo_toml.write_text(text, encoding="utf-8")
+
+          cargo_lock = Path("Cargo.lock")
+          text = cargo_lock.read_text(encoding="utf-8")
+          pattern = r'(\[\[package\]\]\nname = "jcode"\nversion = ")[^"]+("\n)'
+          text, count = re.subn(pattern, rf'\g<1>{version}\2', text, count=1)
+          if count != 1:
+              raise SystemExit("Could not update Cargo.lock package version")
+          cargo_lock.write_text(text, encoding="utf-8")
+          Path(".github/upstream-version").write_text(upstream + "\n", encoding="utf-8")
+          PY
+
+          git add Cargo.toml Cargo.lock .github/upstream-version
+          git commit --amend --no-edit
+          git tag -a "$release_tag" -m "发布 ${release_tag#v}"
+          git push --atomic --force-with-lease="master:$expected_master" origin HEAD:master "refs/tags/$release_tag"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+
+  windows-x64:
+    name: Build Windows x64
+    needs: sync-upstream
+    if: ${{ always() && (startsWith(github.ref, 'refs/tags/v') || needs.sync-upstream.outputs.release_tag != '') }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      JCODE_CI: "1"
+      JCODE_RELEASE_BUILD: "1"
+      JCODE_CI_BUILD: "1"
+      JCODE_BUILD_SEMVER: ${{ needs.sync-upstream.outputs.release_tag || github.ref_name }}
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+      SCCACHE_GHA_ENABLED: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sync-upstream.outputs.release_tag || github.ref }}
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+        continue-on-error: true
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-pc-windows-msvc
+          cache-all-crates: "true"
+
+      - name: Build Windows release
+        shell: pwsh
+        run: cargo build --locked --release --target x86_64-pc-windows-msvc
+
+      - name: Verify and package
+        shell: pwsh
+        run: |
+          $binary = "target/x86_64-pc-windows-msvc/release/jcode.exe"
+          & $binary --version
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $binary dist/jcode-windows-x86_64.exe
+          Compress-Archive -Path dist/jcode-windows-x86_64.exe -DestinationPath dist/jcode-windows-x86_64.zip -Force
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jcode-windows-x86_64
+          path: |
+            dist/jcode-windows-x86_64.exe
+            dist/jcode-windows-x86_64.zip
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $tag = "${{ needs.sync-upstream.outputs.release_tag || github.ref_name }}"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --draft --title $tag --generate-notes
+          }
+          gh release upload $tag dist/jcode-windows-x86_64.exe dist/jcode-windows-x86_64.zip --clobber
+          gh release edit $tag --draft=false
