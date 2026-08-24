@@ -730,8 +730,12 @@ impl OpenAIProvider {
         model_id: &str,
         configured: Option<&'a str>,
     ) -> Option<&'a str> {
-        configured
-            .or_else(|| Self::supports_extended_prompt_cache_retention(model_id).then_some("24h"))
+        match configured {
+            Some("off") => None,
+            configured => configured.or_else(|| {
+                Self::supports_extended_prompt_cache_retention(model_id).then_some("24h")
+            }),
+        }
     }
 
     pub fn new(credentials: CodexCredentials) -> Self {
@@ -801,10 +805,10 @@ impl OpenAIProvider {
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty());
         let prompt_cache_retention = match prompt_cache_retention.as_deref() {
-            Some("in_memory") | Some("24h") => prompt_cache_retention,
+            Some("off") | Some("in_memory") | Some("24h") => prompt_cache_retention,
             Some(other) => {
                 jcode_base::logging::info(&format!(
-                    "Warning: Unsupported JCODE_OPENAI_PROMPT_CACHE_RETENTION '{}'; expected 'in_memory' or '24h'",
+                    "Warning: Unsupported JCODE_OPENAI_PROMPT_CACHE_RETENTION '{}'; expected 'off', 'in_memory', or '24h'",
                     other
                 ));
                 None
