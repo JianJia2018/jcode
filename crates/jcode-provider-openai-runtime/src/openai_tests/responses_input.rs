@@ -468,6 +468,23 @@ fn test_build_response_request_respects_configured_cache_retention() {
 }
 
 #[test]
+fn test_build_response_request_disables_cache_retention_when_configured_off() {
+    let request = build_test_response_request(
+        "gpt-5.6-sol",
+        false,
+        Some(DEFAULT_MAX_OUTPUT_TOKENS),
+        None,
+        None,
+        None,
+        None,
+        Some("off"),
+        None,
+    );
+
+    assert!(request.get("prompt_cache_retention").is_none());
+}
+
+#[test]
 fn test_openai_cache_ttl_is_model_aware() {
     assert_eq!(
         jcode_base::provider::cache_ttl_for_provider_model("openai", Some("gpt-5.6-sol")),
