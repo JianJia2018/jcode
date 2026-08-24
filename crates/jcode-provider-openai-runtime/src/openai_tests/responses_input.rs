@@ -475,6 +475,7 @@ fn test_build_response_request_cache_policy_matches_shared_ttl() {
         ("gpt-5.6-sol", Some("24h"), None, 1800),
         ("gpt-6-astra", Some("in_memory"), None, 1800),
         ("gpt-5.5", None, Some("24h"), 1800),
+        ("gpt-5.5", Some("off"), None, 300),
         ("gpt-5.4", Some("in_memory"), Some("in_memory"), 300),
         ("gpt-4.1", None, Some("24h"), 1800),
         ("gpt-5-codex", None, Some("24h"), 1800),
@@ -500,7 +501,7 @@ fn test_build_response_request_cache_policy_matches_shared_ttl() {
 #[test]
 fn test_oauth_requests_never_send_api_cache_retention_controls() {
     for model in ["gpt-5.4", "gpt-5.5", "gpt-5.6-sol", "gpt-6-astra"] {
-        for retention in [None, Some("24h"), Some("in_memory")] {
+        for retention in [None, Some("off"), Some("24h"), Some("in_memory")] {
             let request = build_test_response_request(
                 model,
                 true,
