@@ -344,6 +344,9 @@ pub struct Agent {
     announced_skills: HashSet<String>,
     /// Transcript index already scanned for late-skill announcements.
     announced_skills_scan_index: usize,
+    /// Cacheable system-prompt prefix captured for this session. Project prompt
+    /// and skill file edits take effect in new sessions instead of busting KV cache.
+    static_system_prompt_snapshot: String,
     /// Whether memory features are enabled for this session
     memory_enabled: bool,
     /// One-step undo snapshot captured before the most recent rewind.
@@ -369,14 +372,24 @@ pub struct Agent {
 }
 
 impl Agent {
-    fn refresh_agents_md_snapshot(&mut self) {
+    fn refresh_static_system_prompt_snapshot(&mut self) {
         let working_dir = self
             .session
             .working_dir
             .as_deref()
-            .map(std::path::Path::new);
-        self.agents_md_snapshot = crate::prompt::load_agents_md_files_from_dir(working_dir);
+            .map(std::path::PathBuf::from);
+        self.agents_md_snapshot =
+            crate::prompt::load_agents_md_files_from_dir(working_dir.as_deref());
         self.refresh_prompt_skills_snapshot();
+        let (split, _) = crate::prompt::build_system_prompt_split_with_agents_md(
+            None,
+            &self.prompt_skills_snapshot,
+            self.session.is_canary,
+            None,
+            working_dir.as_deref(),
+            self.agents_md_snapshot.clone(),
+        );
+        self.static_system_prompt_snapshot = split.static_part;
     }
 
     /// Re-capture the frozen skills list. Only called at session boundaries
@@ -463,6 +476,7 @@ impl Agent {
             prompt_skills_snapshot: Vec::new(),
             announced_skills: HashSet::new(),
             announced_skills_scan_index: 0,
+            static_system_prompt_snapshot: String::new(),
             memory_enabled: crate::config::config().features.memory,
             rewind_undo_snapshot: None,
             stdin_request_tx: None,
@@ -472,7 +486,7 @@ impl Agent {
             transcript_telemetry_sent: false,
             concurrency_session: None,
         };
-        agent.refresh_prompt_skills_snapshot();
+        agent.refresh_static_system_prompt_snapshot();
         agent
     }
 
