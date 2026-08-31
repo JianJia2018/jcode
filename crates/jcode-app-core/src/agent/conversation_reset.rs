@@ -29,7 +29,7 @@ impl Agent {
             self.allowed_tools.clone(),
             self.disabled_tools.clone(),
         );
-        self.refresh_agents_md_snapshot();
+        self.refresh_static_system_prompt_snapshot();
         self.reconcile_explicit_provider_pin_route();
         self.reset_runtime_state_for_session_change();
         self.provider_session_id = None;
