@@ -91,30 +91,17 @@ impl Agent {
             .as_ref()
             .and_then(|name| skills.get(name).map(|skill| skill.get_prompt().to_string()));
 
-        let available_skills: Vec<crate::prompt::SkillInfo> = self
-            .current_skills_snapshot()
-            .list()
-            .iter()
-            .map(|skill| crate::prompt::SkillInfo {
-                name: skill.name.clone(),
-                description: skill.description.clone(),
-            })
-            .collect();
-
-        let working_dir = self
-            .session
-            .working_dir
-            .as_ref()
-            .map(std::path::PathBuf::from);
-
-        let (mut split, _context_info) = crate::prompt::build_system_prompt_split_with_agents_md(
-            skill_prompt.as_deref(),
-            &available_skills,
-            self.session.is_canary,
-            memory_prompt,
-            working_dir.as_deref(),
-            self.agents_md_snapshot.clone(),
-        );
+        let mut dynamic_parts = Vec::new();
+        if let Some(memory) = memory_prompt {
+            dynamic_parts.push(memory.to_string());
+        }
+        if let Some(skill) = skill_prompt {
+            dynamic_parts.push(format!("# Active Skill\n\n{}", skill));
+        }
+        let mut split = crate::prompt::SplitSystemPrompt {
+            static_part: self.static_system_prompt_snapshot.clone(),
+            dynamic_part: dynamic_parts.join("\n\n"),
+        };
 
         self.append_current_turn_system_reminder(&mut split);
         crate::prompt::append_swarm_effort_directive(
