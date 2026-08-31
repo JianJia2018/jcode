@@ -7,10 +7,15 @@ on:
   schedule:
     - cron: "17 * * * *"
   workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: "指定要同步并构建的上游版本（例如 v0.81.4）；留空则使用最新版"
+        required: false
+        type: string
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -34,10 +39,14 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          REQUESTED_UPSTREAM_TAG: ${{ github.event.inputs.upstream_tag || '' }}
         run: |
           set -euo pipefail
           current_upstream="$(cat .github/upstream-version)"
-          latest_upstream="$(gh api repos/1jehuang/jcode/releases/latest --jq .tag_name)"
+          latest_upstream="${REQUESTED_UPSTREAM_TAG:-}"
+          if [ -z "$latest_upstream" ]; then
+            latest_upstream="$(gh api repos/1jehuang/jcode/releases/latest --jq .tag_name)"
+          fi
 
           if [ "$current_upstream" = "$latest_upstream" ]; then
             echo "Already based on $latest_upstream"
@@ -66,9 +75,20 @@ jobs:
           fi
 
           release_tag="$(python3 - "$latest_upstream" <<'PY'
+          import subprocess
           import sys
+
           major, minor, patch = map(int, sys.argv[1].removeprefix("v").split("."))
-          print(f"v{major}.{minor}.{patch + 1}")
+          while True:
+              patch += 1
+              candidate = f"v{major}.{minor}.{patch}"
+              exists = subprocess.run(
+                  ["git", "rev-parse", "--quiet", "--verify", f"refs/tags/{candidate}"],
+                  stdout=subprocess.DEVNULL,
+              ).returncode == 0
+              if not exists:
+                  print(candidate)
+                  break
           PY
           )"
           release_version="${release_tag#v}"
