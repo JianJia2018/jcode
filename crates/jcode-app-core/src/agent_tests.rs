@@ -1017,6 +1017,47 @@ async fn restore_session_rehydrates_injected_memory_ids() {
 }
 
 #[tokio::test]
+async fn static_system_prompt_is_stable_when_project_prompt_files_change() {
+    let _guard = crate::storage::lock_test_env();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let jcode_dir = temp.path().join(".jcode");
+    let skill_dir = temp.path().join(".agents/skills/cache-test");
+    std::fs::create_dir_all(&jcode_dir).expect("create .jcode");
+    std::fs::create_dir_all(&skill_dir).expect("create skill directory");
+    std::fs::write(jcode_dir.join("prompt-overlay.md"), "overlay-before")
+        .expect("write prompt overlay");
+    std::fs::write(jcode_dir.join("preferred-tools.md"), "preferred-before")
+        .expect("write preferred tools");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: cache-test\ndescription: skill-before\n---\nbody-before\n",
+    )
+    .expect("write skill");
+
+    let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
+    let registry = Registry::new(provider.clone()).await;
+    let mut agent = Agent::new(provider, registry);
+    agent.set_working_dir(&temp.path().to_string_lossy());
+    let before = agent.build_system_prompt_split(None);
+    assert!(before.static_part.contains("overlay-before"));
+    assert!(before.static_part.contains("preferred-before"));
+    assert!(before.static_part.contains("skill-before"));
+
+    std::fs::write(jcode_dir.join("prompt-overlay.md"), "overlay-after")
+        .expect("rewrite prompt overlay");
+    std::fs::write(jcode_dir.join("preferred-tools.md"), "preferred-after")
+        .expect("rewrite preferred tools");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: cache-test\ndescription: skill-after\n---\nbody-after\n",
+    )
+    .expect("rewrite skill");
+
+    let after = agent.build_system_prompt_split(None);
+    assert_eq!(before.static_part, after.static_part);
+}
+
+#[tokio::test]
 async fn build_memory_prompt_nonblocking_defers_pending_memory_during_tool_loop() {
     let _guard = crate::storage::lock_test_env();
     crate::memory::clear_all_pending_memory();

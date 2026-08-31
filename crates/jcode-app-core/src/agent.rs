@@ -240,6 +240,9 @@ pub struct Agent {
     /// AGENTS.md is session bootstrap input. Keep the captured text stable so
     /// tool writes do not mutate the provider's cacheable prefix mid-session.
     agents_md_snapshot: (Option<String>, crate::prompt::ContextInfo),
+    /// Cacheable system-prompt prefix captured for this session. Project prompt
+    /// and skill file edits take effect in new sessions instead of busting KV cache.
+    static_system_prompt_snapshot: String,
     /// Whether memory features are enabled for this session
     memory_enabled: bool,
     /// One-step undo snapshot captured before the most recent rewind.
@@ -262,13 +265,33 @@ pub struct Agent {
 }
 
 impl Agent {
-    fn refresh_agents_md_snapshot(&mut self) {
+    fn refresh_static_system_prompt_snapshot(&mut self) {
         let working_dir = self
             .session
             .working_dir
             .as_deref()
-            .map(std::path::Path::new);
-        self.agents_md_snapshot = crate::prompt::load_agents_md_files_from_dir(working_dir);
+            .map(std::path::PathBuf::from);
+        self.agents_md_snapshot =
+            crate::prompt::load_agents_md_files_from_dir(working_dir.as_deref());
+
+        let available_skills: Vec<crate::prompt::SkillInfo> = self
+            .current_skills_snapshot()
+            .list()
+            .iter()
+            .map(|skill| crate::prompt::SkillInfo {
+                name: skill.name.clone(),
+                description: skill.description.clone(),
+            })
+            .collect();
+        let (split, _) = crate::prompt::build_system_prompt_split_with_agents_md(
+            None,
+            &available_skills,
+            self.session.is_canary,
+            None,
+            working_dir.as_deref(),
+            self.agents_md_snapshot.clone(),
+        );
+        self.static_system_prompt_snapshot = split.static_part;
     }
 
     fn should_track_client_cache(&self) -> bool {
@@ -293,7 +316,7 @@ impl Agent {
         let working_dir = session.working_dir.as_deref().map(std::path::Path::new);
         let agents_md_snapshot = crate::prompt::load_agents_md_files_from_dir(working_dir);
         let initial_provider_model = provider.model();
-        let agent = Self {
+        let mut agent = Self {
             provider,
             registry,
             skills,
@@ -321,6 +344,7 @@ impl Agent {
             mcp_late_register_resolved: false,
             system_prompt_override: None,
             agents_md_snapshot,
+            static_system_prompt_snapshot: String::new(),
             memory_enabled: crate::config::config().features.memory,
             rewind_undo_snapshot: None,
             stdin_request_tx: None,
@@ -329,6 +353,7 @@ impl Agent {
             inline_tail: inline_tail::InlineTailBuffer::default(),
             transcript_telemetry_sent: false,
         };
+        agent.refresh_static_system_prompt_snapshot();
         crate::tool::set_session_tool_policy(
             &agent.session.id,
             agent.allowed_tools.clone(),
