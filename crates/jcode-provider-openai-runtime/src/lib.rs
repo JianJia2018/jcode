@@ -1477,6 +1477,7 @@ mod chatgpt_web;
 mod native_web_search;
 #[path = "openai_provider_impl.rs"]
 mod openai_provider_impl;
+use openai_provider_impl::resolve_prompt_cache_key;
 #[path = "openai_stream_runtime.rs"]
 mod openai_stream_runtime;
 mod openai_websocket_prewarm;
