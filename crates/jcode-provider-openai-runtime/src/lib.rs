@@ -1433,6 +1433,7 @@ use self::stream::{handle_openai_output_item, parse_text_wrapped_tool_call};
 mod chatgpt_web;
 #[path = "openai_provider_impl.rs"]
 mod openai_provider_impl;
+use openai_provider_impl::resolve_prompt_cache_key;
 #[path = "openai_stream_runtime.rs"]
 mod openai_stream_runtime;
 mod openai_websocket_prewarm;

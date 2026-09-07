@@ -20,16 +20,6 @@ pub(crate) fn resolve_prompt_cache_key<'a>(
         .or_else(|| session.map(str::trim).filter(|key| !key.is_empty()))
 }
 
-pub(crate) fn resolve_prompt_cache_key<'a>(
-    configured: Option<&'a str>,
-    session: Option<&'a str>,
-) -> Option<&'a str> {
-    configured
-        .map(str::trim)
-        .filter(|key| !key.is_empty())
-        .or_else(|| session.map(str::trim).filter(|key| !key.is_empty()))
-}
-
 #[async_trait]
 impl Provider for OpenAIProvider {
     fn reload_credentials(&self) {
