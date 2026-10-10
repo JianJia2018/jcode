@@ -135,6 +135,8 @@ jobs:
       JCODE_BUILD_SEMVER: ${{ needs.sync-upstream.outputs.release_tag || github.ref_name }}
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: "0"
+      # 上游默认包装器是 POSIX 脚本，原生 Windows runner 必须禁用。
+      CARGO_BUILD_RUSTC_WRAPPER: ""
       SCCACHE_GHA_ENABLED: "true"
 
     steps:
