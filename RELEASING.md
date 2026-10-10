@@ -2,6 +2,15 @@
 
 jcode has two release paths: a fast local path for hotfixes, and CI for full releases.
 
+## Fork Windows release
+
+The `JianJia2018/jcode` fork uses `.github/workflows/fork-release.yml` to build Windows x64 from a pushed `v*` tag. Local synchronization only fetches Git references, rebases the custom commits, updates the root package/lockfile version and `.github/upstream-version`, and pushes the branch and a new tag; no local Rust environment or build is required.
+
+The Windows job must set `CARGO_BUILD_RUSTC_WRAPPER: ""`. Upstream `.cargo/config.toml` selects `scripts/rustc-parallel-frontend`, a POSIX script that native Windows cannot execute (`os error 193`). Keep the override in the remote Windows job, as the upstream release workflow does.
+
+If synchronization changes workflow files, GitHub may reject the default Actions token because it lacks workflow-write permission. In that case, perform the rebase and push locally using existing authorized Git credentials, then let the tag trigger the remote build. Do not rewrite an already pushed failed release tag; use the next unused patch version.
+
+
 ## Quick Release (local, ~2.5 minutes)
 
 For hotfixes and urgent updates. Builds Linux + macOS locally and stages them on a draft release while CI completes the remaining platforms.
