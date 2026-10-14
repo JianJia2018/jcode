@@ -10,6 +10,8 @@ The Windows job must set `CARGO_BUILD_RUSTC_WRAPPER: ""`. Upstream `.cargo/confi
 
 If synchronization changes workflow files, GitHub may reject the default Actions token because it lacks workflow-write permission. In that case, perform the rebase and push locally using existing authorized Git credentials, then let the tag trigger the remote build. Do not rewrite an already pushed failed release tag; use the next unused patch version.
 
+When rebasing onto v0.97.0, preserve both the upstream request-start credential/email snapshots and the fork's OpenAI session-scoped cache key in `turn_streaming_mpsc.rs`. The companion listener must be bound with `let mut listener`: Windows named-pipe `Listener::accept` takes `&mut self`. The v0.97.2 Windows Actions build verified compilation, ran `jcode --version`, and published the executable and ZIP; no local toolchain setup or build was used.
+
 
 ## Normal release procedure
 
