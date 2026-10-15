@@ -12,6 +12,8 @@ If synchronization changes workflow files, GitHub may reject the default Actions
 
 When rebasing onto v0.97.0, preserve both the upstream request-start credential/email snapshots and the fork's OpenAI session-scoped cache key in `turn_streaming_mpsc.rs`. The companion listener must be bound with `let mut listener`: Windows named-pipe `Listener::accept` takes `&mut self`. The v0.97.2 Windows Actions build verified compilation, ran `jcode --version`, and published the executable and ZIP; no local toolchain setup or build was used.
 
+When rebasing onto v0.98.1, `Agent::clear` lives in `agent/conversation_reset.rs`. Apply the fork's `refresh_static_system_prompt_snapshot()` call there instead of restoring the removed methods in `turn_execution.rs`. Keep upstream's Windows-only mutable listener binding, which already replaces the v0.97.2 fork fix. The fork release is v0.98.2; the upstream normal-release procedure below remains separate from the fork Windows workflow.
+
 
 ## Normal release procedure
 
