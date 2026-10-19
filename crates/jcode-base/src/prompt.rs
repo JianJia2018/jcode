@@ -637,7 +637,10 @@ impl SelfDevProductContext {
     }
 }
 
-fn build_selfdev_prompt_static_for_working_dir(working_dir: Option<&Path>) -> String {
+/// Static CLI self-development prompt block for `working_dir`. Pure: performs
+/// no file I/O. Callers are responsible for applying Desktop precedence before
+/// using this block.
+pub fn build_selfdev_prompt_static_for_working_dir(working_dir: Option<&Path>) -> String {
     build_selfdev_prompt_static_for_context(SelfDevProductContext::from_working_dir(working_dir))
 }
 

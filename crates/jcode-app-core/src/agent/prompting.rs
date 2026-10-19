@@ -142,30 +142,12 @@ impl Agent {
         }
 
         // The active skill prompt is announced once in the transcript when the
-        // skill is activated (see `announce_active_skill`). Keeping it out of
-        // the system prompt means switching skills never invalidates the cache.
-        let skill_prompt: Option<String> = None;
-
-        // Frozen per session so skill installs never rewrite the cached
-        // system prefix. Later installs are announced in the transcript.
-        let available_skills = &self.prompt_skills_snapshot;
-
-        let working_dir = self
-            .session
-            .working_dir
-            .as_ref()
-            .map(std::path::PathBuf::from);
-
-        let (split, _context_info) = crate::prompt::build_system_prompt_split_with_agents_md(
-            skill_prompt.as_deref(),
-            available_skills,
-            self.session.is_canary,
-            memory_prompt,
-            working_dir.as_deref(),
-            self.agents_md_snapshot.clone(),
-        );
-
-        split
+        // skill is activated (see `announce_active_skill`), so it is not part of
+        // the system prompt and switching skills never invalidates the cache.
+        crate::prompt::SplitSystemPrompt {
+            static_part: self.static_system_prompt_snapshot.clone(),
+            dynamic_part: memory_prompt.unwrap_or_default().to_owned(),
+        }
     }
 
     /// Non-blocking memory prompt - takes pending result and spawns check for next turn

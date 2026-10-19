@@ -1715,6 +1715,173 @@ async fn restore_session_rehydrates_injected_memory_ids() {
 }
 
 #[tokio::test]
+async fn static_system_prompt_is_stable_when_project_prompt_files_change() {
+    let _guard = crate::storage::lock_test_env();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let jcode_dir = temp.path().join(".jcode");
+    let skill_dir = temp.path().join(".agents/skills/cache-test");
+    std::fs::create_dir_all(&jcode_dir).expect("create .jcode");
+    std::fs::create_dir_all(&skill_dir).expect("create skill directory");
+    std::fs::write(jcode_dir.join("prompt-overlay.md"), "overlay-before")
+        .expect("write prompt overlay");
+    std::fs::write(jcode_dir.join("preferred-tools.md"), "preferred-before")
+        .expect("write preferred tools");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: cache-test\ndescription: skill-before\n---\nbody-before\n",
+    )
+    .expect("write skill");
+
+    let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
+    let registry = Registry::new(provider.clone()).await;
+    let mut agent = Agent::new(provider, registry);
+    agent.set_working_dir(&temp.path().to_string_lossy());
+    let before = agent.build_system_prompt_split(None);
+    assert!(before.static_part.contains("overlay-before"));
+    assert!(before.static_part.contains("preferred-before"));
+    assert!(before.static_part.contains("skill-before"));
+
+    std::fs::write(jcode_dir.join("prompt-overlay.md"), "overlay-after")
+        .expect("rewrite prompt overlay");
+    std::fs::write(jcode_dir.join("preferred-tools.md"), "preferred-after")
+        .expect("rewrite preferred tools");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: cache-test\ndescription: skill-after\n---\nbody-after\n",
+    )
+    .expect("rewrite skill");
+
+    let after = agent.build_system_prompt_split(None);
+    assert_eq!(before.static_part, after.static_part);
+}
+
+#[test]
+fn canary_mode_preserves_frozen_prompt_inputs_and_late_skill_announcements() {
+    let _lock = crate::storage::lock_test_env();
+    let home = tempfile::tempdir().unwrap();
+    struct RestoreHome(Option<std::ffi::OsString>);
+    impl Drop for RestoreHome {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(home) => crate::env::set_var("JCODE_HOME", home),
+                None => crate::env::remove_var("JCODE_HOME"),
+            }
+            crate::config::Config::invalidate_cache();
+        }
+    }
+    let _restore = RestoreHome(std::env::var_os("JCODE_HOME"));
+    crate::env::set_var("JCODE_HOME", home.path());
+    crate::config::Config::invalidate_cache();
+
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(project.path().join(".jcode")).unwrap();
+    let inputs = [
+        ("AGENTS.md", "frozen-agents-before", "frozen-agents-after"),
+        (
+            ".jcode/system-prompt.md",
+            "frozen-base-before 中文",
+            "frozen-base-after",
+        ),
+        (
+            ".jcode/prompt-overlay.md",
+            "frozen-overlay-before",
+            "frozen-overlay-after",
+        ),
+        (
+            ".jcode/preferred-tools.md",
+            "frozen-preferred-before",
+            "frozen-preferred-after",
+        ),
+    ];
+    for &(path, before, _) in &inputs {
+        std::fs::write(project.path().join(path), before).unwrap();
+    }
+    let write_skill = |name: &str, description: &str| {
+        let dir = project.path().join(".jcode/skills").join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {description}\n---\n\nSkill body.\n"),
+        )
+        .unwrap();
+    };
+    write_skill("freeze-cross-early", "frozen-skill-before");
+
+    let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
+    let mut agent = Agent::new_with_initial_working_dir(
+        provider,
+        Registry::empty(),
+        Some(project.path().to_str().unwrap()),
+    );
+    let initial = agent.build_system_prompt_split(None).static_part;
+    for &(_, before, _) in &inputs {
+        assert!(initial.contains(before), "missing initial value {before}");
+    }
+    assert!(initial.contains("frozen-skill-before"));
+    assert!(!initial.contains("selfdev build target=tui"));
+
+    let announcements = |agent: &Agent| {
+        transcript_texts(agent)
+            .into_iter()
+            .filter(|text| text.contains("New skills were installed."))
+            .collect::<Vec<_>>()
+    };
+    write_skill("freeze-cross-announced", "Announced before canary");
+    agent.announce_late_skills();
+    assert_eq!(announcements(&agent).len(), 1);
+    assert!(announcements(&agent)[0].contains("freeze-cross-announced"));
+
+    for &(path, _, after) in &inputs {
+        std::fs::write(project.path().join(path), after).unwrap();
+    }
+    write_skill("freeze-cross-early", "frozen-skill-after");
+    write_skill("freeze-cross-pending", "Pending at the canary transition");
+    assert_eq!(agent.build_system_prompt_split(None).static_part, initial);
+
+    agent.set_canary("frozen-prompt-regression");
+    assert!(agent.is_canary());
+    let canary = agent.build_system_prompt_split(None).static_part;
+    assert!(canary.contains("selfdev build target=tui"));
+    for &(_, before, after) in &inputs {
+        assert!(canary.contains(before), "lost frozen value {before}");
+        assert!(!canary.contains(after), "recaptured changed value {after}");
+    }
+    assert!(canary.contains("frozen-skill-before"));
+    assert!(!canary.contains("frozen-skill-after"));
+    assert!(!canary.contains("freeze-cross-announced"));
+    assert!(!canary.contains("freeze-cross-pending"));
+
+    agent.announce_late_skills();
+    let after_transition = announcements(&agent);
+    assert_eq!(after_transition.len(), 2);
+    assert!(after_transition[1].contains("freeze-cross-pending"));
+    assert!(!after_transition[1].contains("freeze-cross-announced"));
+
+    std::fs::write(
+        project.path().join(".jcode/prompt-overlay.md"),
+        "frozen-overlay-after-repeat",
+    )
+    .unwrap();
+    write_skill("freeze-cross-after", "Installed before repeated canary");
+    agent.set_canary("frozen-prompt-regression-again");
+    assert_eq!(agent.build_system_prompt_split(None).static_part, canary);
+    agent.announce_late_skills();
+    let after_repeat = announcements(&agent);
+    assert_eq!(after_repeat.len(), 3);
+    assert!(after_repeat[2].contains("freeze-cross-after"));
+    assert!(!after_repeat[2].contains("freeze-cross-announced"));
+    assert!(!after_repeat[2].contains("freeze-cross-pending"));
+    agent.announce_late_skills();
+    assert_eq!(announcements(&agent), after_repeat);
+
+    agent.set_system_prompt("custom override stays authoritative");
+    agent.set_canary("frozen-prompt-override");
+    let overridden = agent.build_system_prompt_split(Some("ignored memory"));
+    assert_eq!(overridden.static_part, "custom override stays authoritative");
+    assert!(overridden.dynamic_part.is_empty());
+}
+
+#[tokio::test]
 async fn build_memory_prompt_nonblocking_defers_pending_memory_during_tool_loop() {
     let _guard = crate::storage::lock_test_env();
     struct RestoreMemoryHome(Option<std::ffi::OsString>);
