@@ -486,6 +486,22 @@ impl Agent {
             self.unlock_tools();
         }
         self.session.set_canary(build_hash);
+        // Session::set_canary only enables canary mode (no product off path),
+        // so this offset is consumed exactly once.
+        if let Some(offset) = self.static_system_prompt_canary_offset.take() {
+            // Only the CLI self-dev block changes. AGENTS.md, prompt overlays,
+            // preferred tools, and skills stay at their session-capture values.
+            // The offset is only captured for non-Desktop sessions, so no mode
+            // detection is needed here.
+            let mut block = crate::prompt::build_selfdev_prompt_static_for_working_dir(
+                self.session
+                    .working_dir
+                    .as_deref()
+                    .map(|dir| std::path::Path::new(dir)),
+            );
+            block.insert_str(0, "\n\n");
+            self.static_system_prompt_snapshot.insert_str(offset, &block);
+        }
         if let Err(err) = self.session.save() {
             logging::error(&format!("Failed to persist canary session state: {}", err));
         }
