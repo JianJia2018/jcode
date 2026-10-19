@@ -69,6 +69,19 @@ python3 tests/test_release_ci.py
 actionlint -shellcheck= .github/workflows/preview.yml .github/workflows/release.yml
 ```
 
+## Fork Windows release
+
+The `JianJia2018/jcode` fork uses `.github/workflows/fork-release.yml` to build Windows x64 from a pushed `v*` tag. Local synchronization only fetches Git references, rebases the custom commits, updates the root package/lockfile version and `.github/upstream-version`, and pushes the branch and a new tag; no local Rust environment or build is required.
+
+The Windows job must set `CARGO_BUILD_RUSTC_WRAPPER: ""`. Upstream `.cargo/config.toml` selects `scripts/rustc-parallel-frontend`, a POSIX script that native Windows cannot execute (`os error 193`). Keep the override in the remote Windows job, as the upstream release workflow does.
+
+If synchronization changes workflow files, GitHub may reject the default Actions token because it lacks workflow-write permission. In that case, perform the rebase and push locally using existing authorized Git credentials, then let the tag trigger the remote build. Do not rewrite an already pushed failed release tag; use the next unused patch version.
+
+Keep only four fork commits: the `JCODE_OPENAI_PROMPT_CACHE_RETENTION=off` override (omit the legacy retention field, not caching itself), session-static system-prompt snapshots, Windows release automation/version metadata, and preview-release support in `fork-release.yml`. OpenAI session affinity and the Windows listener fix are upstream-owned; do not reapply the old fork patches. Preserve upstream `Provider::set_session_id` calls when moving snapshot refreshes.
+
+The simplified v0.99.3 history starts at upstream release `v0.99.1` (`7206efd0c`) with only the three fork commits above. `.github/upstream-version` records `v0.99.1` so the release-sync workflow compares against the actual baseline instead of replaying upstream commits that are already applied. The `v0.99.2` release itself succeeded and its tag stays on the pre-rebase history. The subsequent scheduled synchronization replayed extra upstream commits from the stale `v0.99.0` marker and failed on a `docs/images/star-history.svg` rebase conflict; release tags are never rewritten, so the next unused patch `v0.99.3` is used instead. Historical release tags remain unchanged; `backup/custom-before-simplify-20261019` preserves the previous local history and `backup/pre-rebase-v0.99.1-20261103` preserves the pre-rebase master.
+Current master was integrated directly onto upstream `master` at `91d6ca01d` rather than onto a release tag. That commit contains upstream release `v1.0.0-preview.136`, so `.github/upstream-version` records `v1.0.0-preview.136`: the marker names the newest upstream publication contained in the branch, not the exact baseline commit. Consequently the scheduled workflow prints `Already based on v1.0.0-preview.136` and skips; after a newer release it rebases only that delta instead of replaying the roughly 700 commits already contained in master. This integration is not a release: it creates no tag and leaves the released `0.99.3` package version and lockfile unchanged.
+
 ## Normal release procedure
 
 1. Prepare and commit the version bump in `Cargo.toml`, `Cargo.lock`, and the changelog. Commit any source changes before preparing a cached fast-release binary.
