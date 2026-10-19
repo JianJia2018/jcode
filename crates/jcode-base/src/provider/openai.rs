@@ -189,9 +189,10 @@ pub fn uses_prompt_cache_options(model_id: &str) -> bool {
 }
 
 /// Normalize the supported legacy override values, shared by TTL reporting and
-/// the request builder. Model-specific override compatibility is checked by the API.
+/// the request builder. `off` suppresses the legacy request field.
 pub fn normalize_prompt_cache_retention(value: &str) -> Option<&str> {
     match value.trim() {
+        "off" => Some("off"),
         "in_memory" => Some("in_memory"),
         "24h" => Some("24h"),
         _ => None,
@@ -212,9 +213,11 @@ pub fn effective_prompt_cache_retention<'a>(
         // Omit the obsolete field and rely on the documented 30m default.
         return None;
     }
-    configured
-        .and_then(normalize_prompt_cache_retention)
-        .or_else(|| supports_extended_prompt_cache_retention(model_id).then_some("24h"))
+    match configured.and_then(normalize_prompt_cache_retention) {
+        Some("off") => None,
+        configured => configured
+            .or_else(|| supports_extended_prompt_cache_retention(model_id).then_some("24h")),
+    }
 }
 
 /// API cache retention estimate, not a guaranteed cache hit or expiry time.
@@ -278,6 +281,7 @@ mod cache_tests {
         for (model, configured, retention, ttl) in [
             ("gpt-5.4", None, Some("24h"), 1800),
             ("gpt-5.4", Some(" in_memory "), Some("in_memory"), 300),
+            ("gpt-5.4", Some(" off "), None, 300),
             ("gpt-5.4", Some("invalid"), Some("24h"), 1800),
             ("gpt-4o", None, None, 300),
             ("gpt-4o", Some("24h"), Some("24h"), 1800),
@@ -322,6 +326,7 @@ mod cache_tests {
             (None, 1800),
             (Some(" in_memory "), 300),
             (Some("24h"), 1800),
+            (Some("off"), 300),
             (Some("bogus"), 1800),
         ] {
             match value {
