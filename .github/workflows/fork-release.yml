@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       upstream_tag:
-        description: "指定要同步并构建的上游版本（例如 v0.89.0）；留空则使用最新版"
+        description: "指定要同步并构建的上游版本（例如 v0.89.0 或 v1.0.0-preview.136）；留空则使用最新上游发布（含预览版）"
         required: false
         type: string
 
@@ -45,7 +45,21 @@ jobs:
           current_upstream="$(cat .github/upstream-version)"
           latest_upstream="${REQUESTED_UPSTREAM_TAG:-}"
           if [ -z "$latest_upstream" ]; then
-            latest_upstream="$(gh api repos/1jehuang/jcode/releases/latest --jq .tag_name)"
+            # --slurp 把全部分页汇总为一个外层数组（gh 不允许与 --jq 同用），
+            # 再由 Python 统一取 published_at 最新者：包含 prerelease、排除 draft，
+            # 不依赖 API 返回顺序或第一页。
+            latest_upstream="$(gh api repos/1jehuang/jcode/releases --paginate --slurp | python3 -c '
+          import json
+          import sys
+
+          pages = json.load(sys.stdin)
+          releases = [release for page in pages for release in page if release.get("published_at") and not release.get("draft")]
+          print(max(releases, key=lambda release: release["published_at"])["tag_name"] if releases else "")
+          ')"
+          fi
+          if [ -z "$latest_upstream" ]; then
+            echo "Could not determine the latest upstream release" >&2
+            exit 1
           fi
 
           if [ "$current_upstream" = "$latest_upstream" ]; then
@@ -60,7 +74,9 @@ jobs:
           latest_ref="refs/upstream-tags/$latest_upstream"
           git fetch https://github.com/1jehuang/jcode.git "refs/tags/$current_upstream:$current_ref" "refs/tags/$latest_upstream:$latest_ref"
 
-          if ! git rebase --onto "$latest_ref" "$current_ref" master; then
+          # 发布标记不一定是 master 的实际基线；排除双方已共享的上游提交。
+          rebase_base="$(git merge-base master "$latest_ref")"
+          if ! git rebase --onto "$latest_ref" "$rebase_base" master; then
             conflicts="$(git diff --name-only --diff-filter=U | sort)"
             expected="$(printf 'Cargo.lock\nCargo.toml')"
             if [ "$conflicts" != "$expected" ]; then
@@ -78,17 +94,40 @@ jobs:
           import subprocess
           import sys
 
-          major, minor, patch = map(int, sys.argv[1].removeprefix("v").split("."))
-          while True:
-              patch += 1
-              candidate = f"v{major}.{minor}.{patch}"
-              exists = subprocess.run(
+          upstream = sys.argv[1]
+          semver = upstream[1:] if upstream.startswith("v") else upstream
+          # build metadata 也可能含 "-"，先剔除再判断 semver 预发布部分。
+          core = semver.split("+", 1)[0]
+          base, separator, prerelease = core.partition("-")
+
+          def tag_exists(candidate):
+              return subprocess.run(
                   ["git", "rev-parse", "--quiet", "--verify", f"refs/tags/{candidate}"],
                   stdout=subprocess.DEVNULL,
               ).returncode == 0
-              if not exists:
-                  print(candidate)
-                  break
+
+          if separator and prerelease:
+              # 预览版保留上游预发布标识，只追加 fork 序号：
+              # v1.0.0-preview.136 -> v1.0.0-preview.136.fork.1（已存在则 .fork.2 …）。
+              stem = f"v{base}-{prerelease}"
+              sequence = 0
+              while True:
+                  sequence += 1
+                  candidate = f"{stem}.fork.{sequence}"
+                  if not tag_exists(candidate):
+                      print(candidate)
+                      break
+          else:
+              parts = base.split(".")
+              if len(parts) != 3:
+                  raise SystemExit(f"Unsupported upstream version: {upstream}")
+              major, minor, patch = map(int, parts)
+              while True:
+                  patch += 1
+                  candidate = f"v{major}.{minor}.{patch}"
+                  if not tag_exists(candidate):
+                      print(candidate)
+                      break
           PY
           )"
           release_version="${release_tag#v}"
@@ -187,11 +226,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.sync-upstream.outputs.release_tag || github.ref_name }}
         run: |
-          $tag = "${{ needs.sync-upstream.outputs.release_tag || github.ref_name }}"
+          $tag = $env:RELEASE_TAG
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            throw "No release tag resolved for this run"
+          }
+          # semver 预发布判定：先去掉 build metadata（其中也可能含 "-"），
+          # 再看核心版本之后是否仍有 "-"。
+          $semver = ($tag -replace '^v', '').Split('+')[0]
+          $prerelease = if ($semver.Contains('-')) { "true" } else { "false" }
+
           gh release view $tag *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --draft --title $tag --generate-notes
+            # 预览版不会被 GitHub 选为 latest；正式版保持现有发布语义。
+            gh release create $tag --draft --title $tag --generate-notes "--prerelease=$prerelease"
           }
           gh release upload $tag dist/jcode-windows-x86_64.exe dist/jcode-windows-x86_64.zip --clobber
-          gh release edit $tag --draft=false
+          gh release edit $tag "--draft=false" "--prerelease=$prerelease"
