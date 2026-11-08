@@ -2,6 +2,11 @@ name: Fork release
 
 on:
   push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/fork-release.yml"
+      - ".github/upstream-version"
     tags:
       - "v*"
   schedule:
@@ -12,6 +17,11 @@ on:
         description: "指定要同步并构建的上游版本（例如 v0.89.0 或 v1.0.0-preview.136）；留空则使用最新上游发布（含预览版）"
         required: false
         type: string
+      force_build:
+        description: "即使已同步或已发布也重新构建（使用新的 fork 标签，不覆盖已有版本）"
+        required: false
+        default: true
+        type: boolean
 
 concurrency:
   group: fork-release-${{ github.ref }}
@@ -23,7 +33,7 @@ permissions:
 jobs:
   sync-upstream:
     name: Sync upstream release
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name != 'push' || github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -34,12 +44,16 @@ jobs:
           ref: master
           fetch-depth: 0
 
+      - name: Test fork release decisions
+        run: python3 tests/test_fork_release.py -v
+
       - name: Rebase custom commits onto latest upstream release
         id: sync
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_UPSTREAM_TAG: ${{ github.event.inputs.upstream_tag || '' }}
+          FORCE_BUILD: ${{ github.event_name == 'workflow_dispatch' && inputs.force_build }}
         run: |
           set -euo pipefail
           current_upstream="$(cat .github/upstream-version)"
@@ -62,17 +76,52 @@ jobs:
             exit 1
           fi
 
-          if [ "$current_upstream" = "$latest_upstream" ]; then
-            echo "Already based on $latest_upstream"
-            exit 0
+          if [ "$current_upstream" = "$latest_upstream" ] && [ "${FORCE_BUILD:-false}" != true ]; then
+            # 同步标记只代表源码基线；只有对应版本的完整发布存在时才跳过。
+            published="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --slurp | python3 - "$latest_upstream" 3<&0 <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import sys
+          import tomllib
+
+          upstream = sys.argv[1].removeprefix("v").split("+", 1)[0]
+          version = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
+          core, separator, prerelease = upstream.partition("-")
+          if separator:
+              matches = re.fullmatch(re.escape(upstream) + r"\.fork\.\d+", version) is not None
+          else:
+              base = tuple(map(int, core.split(".")))
+              parts = version.split(".")
+              matches = len(parts) == 3 and all(part.isdigit() for part in parts)
+              matches = matches and tuple(map(int, parts[:2])) == base[:2] and int(parts[2]) > base[2]
+          with os.fdopen(3) as response:
+              releases = [release for page in json.load(response) for release in page]
+          required = {"jcode-windows-x86_64.exe", "jcode-windows-x86_64.zip"}
+          published = any(
+              release.get("tag_name") == "v" + version and release.get("published_at")
+              and not release.get("draft") and required <= {
+                  asset["name"] for asset in release.get("assets", [])
+                  if asset.get("state") == "uploaded" and asset.get("size", 0) > 0
+              }
+              for release in releases
+          )
+          print("true" if matches and published else "false")
+          PY
+            )"
+            if [ "$published" = true ]; then
+              echo "Already published Windows assets for $latest_upstream"
+              exit 0
+            fi
+            echo "Source already synchronized; building missing Windows release for $latest_upstream"
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           expected_master="$(git rev-parse origin/master)"
-          current_ref="refs/upstream-tags/$current_upstream"
           latest_ref="refs/upstream-tags/$latest_upstream"
-          git fetch https://github.com/1jehuang/jcode.git "refs/tags/$current_upstream:$current_ref" "refs/tags/$latest_upstream:$latest_ref"
+          git fetch https://github.com/1jehuang/jcode.git "refs/tags/$latest_upstream:$latest_ref"
 
           # 发布标记不一定是 master 的实际基线；排除双方已共享的上游提交。
           rebase_base="$(git merge-base master "$latest_ref")"
