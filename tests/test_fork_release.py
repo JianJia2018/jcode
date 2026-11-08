@@ -60,6 +60,15 @@ def release(tag, published_at, *, draft=False, prerelease=False):
             "draft": draft, "prerelease": prerelease}
 
 
+def windows_release(tag):
+    published = release(tag, "2026-11-08T12:00:00Z")
+    published["assets"] = [
+        {"name": name, "state": "uploaded", "size": 123}
+        for name in ("jcode-windows-x86_64.exe", "jcode-windows-x86_64.zip")
+    ]
+    return published
+
+
 # gh returns an outer array of pages with --slurp; without --paginate only
 # page one is visible. Selection remains entirely in the workflow's script.
 # Git transport, rebase, commit and push are deliberately blocked: candidate
@@ -73,6 +82,10 @@ gh() {
     fi
     printf 'api\n' >> .fixture-gh-calls
     shift
+    if [ "${1-}" = "repos/fixture/fork/releases" ]; then
+        cat .fixture-fork.json
+        return 0
+    fi
     local paginate=0 slurp=0 page
     local -a pages=()
     while [ "$#" -gt 0 ]; do
@@ -119,7 +132,8 @@ git() {
 
 @unittest.skipUnless(BASH and GIT, "requires bash and git")
 class SyncWorkflowTests(unittest.TestCase):
-    def run_sync(self, *, pages=(), current="v0.90.0", requested="", tags=()):
+    def run_sync(self, *, pages=(), current="v0.90.0", requested="", tags=(),
+                 force=False, version="0.90.0", fork_releases=()):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
             subprocess.run([GIT, "init", "--quiet", str(repo)], check=True,
@@ -133,15 +147,18 @@ class SyncWorkflowTests(unittest.TestCase):
             (repo / ".github").mkdir()
             (repo / ".github/upstream-version").write_text(current + "\n", encoding="utf-8")
             (repo / "Cargo.toml").write_text(
-                '[package]\nname = "jcode"\nversion = "0.90.0"\n', encoding="utf-8")
+                f'[package]\nname = "jcode"\nversion = "{version}"\n', encoding="utf-8")
             (repo / "Cargo.lock").write_text(
-                '[[package]]\nname = "jcode"\nversion = "0.90.0"\n', encoding="utf-8")
+                f'[[package]]\nname = "jcode"\nversion = "{version}"\n', encoding="utf-8")
             for number, page in enumerate(pages, 1):
                 (repo / f".fixture-page-{number}.json").write_text(
                     json.dumps(page), encoding="utf-8")
+            (repo / ".fixture-fork.json").write_text(
+                json.dumps([list(fork_releases)]), encoding="utf-8")
             env = dict(os.environ, REQUESTED_UPSTREAM_TAG=requested,
                        GITHUB_OUTPUT=".fixture-output", FIXTURE_PYTHON=sys.executable,
-                       GH_TOKEN="fixture")
+                       GH_TOKEN="fixture", GITHUB_REPOSITORY="fixture/fork",
+                       FORCE_BUILD="true" if force else "false")
             script = repo / ".fixture-sync.sh"
             script.write_text(SYNC_FIXTURE + workflow_script(
                 "Rebase custom commits onto latest upstream release"),
@@ -220,25 +237,49 @@ class SyncWorkflowTests(unittest.TestCase):
         self.assert_selected(outcome, "v0.99.1", "v0.99.3")
         self.assertEqual(outcome["gh"], [])
 
-    def test_requested_current_baseline_skips_api_and_all_git_operations(self):
-        outcome = self.run_sync(current="v1.0.0-preview.136",
-                                requested="v1.0.0-preview.136")
-        self.assertEqual(outcome["result"].returncode, 0, outcome["result"].stderr)
-        self.assertEqual(outcome["marker"], "v1.0.0-preview.136")
-        self.assertEqual(outcome["gh"], [])
-        self.assertEqual(outcome["git"], [])
-        self.assertEqual(outcome["output"], "")
-
-    def test_automatically_selected_current_baseline_skips_git_and_output(self):
+    def test_manual_force_builds_current_preview_with_new_tag(self):
+        tag = "v1.0.0-preview.199.fork.1"
         outcome = self.run_sync(
-            current="v1.0.0-preview.136",
-            pages=[[release("v0.99.1", "2026-10-18T12:00:00Z")],
-                   [release("v1.0.0-preview.136", "2026-10-26T12:00:00Z", prerelease=True)]])
-        self.assertEqual(outcome["result"].returncode, 0, outcome["result"].stderr)
-        self.assertEqual(outcome["marker"], "v1.0.0-preview.136")
-        self.assertEqual(outcome["gh"], ["api"])
-        self.assertEqual(outcome["git"], [])
-        self.assertEqual(outcome["output"], "")
+            current="v1.0.0-preview.199", requested="v1.0.0-preview.199",
+            force=True, version=tag.removeprefix("v"), tags=(tag,),
+            fork_releases=[windows_release(tag)])
+        self.assert_selected(outcome, "v1.0.0-preview.199", "v1.0.0-preview.199.fork.2")
+        self.assertEqual(outcome["gh"], [])
+
+    def test_scheduled_current_source_with_only_old_stable_release_builds_preview(self):
+        outcome = self.run_sync(
+            current="v1.0.0-preview.199", version="0.99.3",
+            pages=[[release("v1.0.0-preview.199", "2026-11-06T15:01:12Z", prerelease=True)]],
+            fork_releases=[windows_release("v0.99.3")])
+        self.assert_selected(outcome, "v1.0.0-preview.199", "v1.0.0-preview.199.fork.1")
+
+    def test_complete_current_publication_skips_git_and_output(self):
+        for upstream, tag in (("v1.0.0-preview.199", "v1.0.0-preview.199.fork.1"),
+                              ("v0.99.1", "v0.99.3")):
+            with self.subTest(upstream=upstream):
+                outcome = self.run_sync(
+                    current=upstream, version=tag.removeprefix("v"),
+                    pages=[[release(upstream, "2026-11-06T15:01:12Z")]],
+                    fork_releases=[windows_release(tag)])
+                self.assertEqual(outcome["result"].returncode, 0, outcome["result"].stderr)
+                self.assertEqual(outcome["marker"], upstream)
+                self.assertEqual(outcome["git"], [])
+                self.assertEqual(outcome["output"], "")
+
+    def test_missing_draft_or_incomplete_preview_is_rebuilt(self):
+        tag = "v1.0.0-preview.199.fork.1"
+        draft = windows_release(tag)
+        draft["draft"] = True
+        incomplete = windows_release(tag)
+        incomplete["assets"] = incomplete["assets"][:1]
+        empty_asset = windows_release(tag)
+        empty_asset["assets"][0]["size"] = 0
+        for published in ([], [draft], [incomplete], [empty_asset]):
+            with self.subTest(releases=published):
+                outcome = self.run_sync(
+                    current="v1.0.0-preview.199", requested="v1.0.0-preview.199",
+                    version=tag.removeprefix("v"), tags=(tag,), fork_releases=published)
+                self.assert_selected(outcome, "v1.0.0-preview.199", "v1.0.0-preview.199.fork.2")
 
 
 @unittest.skipUnless(BASH and GIT, "requires bash and git")
