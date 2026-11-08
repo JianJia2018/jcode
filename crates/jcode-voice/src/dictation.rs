@@ -291,7 +291,6 @@ fn focused_window_niri_socket() -> Option<Option<NiriFocusedWindow>> {
     // niri is a Wayland compositor and its IPC is a Unix socket.
     None
 }
-
 #[cfg(unix)]
 fn focused_window_niri_socket() -> Option<Option<NiriFocusedWindow>> {
     let path = std::env::var_os("NIRI_SOCKET")?;
@@ -386,6 +385,7 @@ fn focused_window_niri_socket_at(path: &std::ffi::OsStr) -> Result<Option<NiriFo
 }
 
 fn focused_window_niri() -> Result<Option<NiriFocusedWindow>> {
+    #[cfg(unix)]
     if let Some(window) = focused_window_niri_socket() {
         return Ok(window);
     }
