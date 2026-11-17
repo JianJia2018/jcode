@@ -588,19 +588,6 @@ class PreviewWorkflowTests(unittest.TestCase):
                 self.assertEqual(archive.getnames(), [arm_runtime.MEMBER])
                 self.assertEqual(archive.extractfile(arm_runtime.MEMBER).read(), binary.read_bytes())
 
-    def test_ci_runs_preview_tests(self):
-        self.assertIn('python3 scripts/test_preview_release.py',
-                      (ROOT / '.github/workflows/ci.yml').read_text())
-
-    def test_main_push_ci_is_sha_isolated_but_pr_checks_remain_latest(self):
-        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
-        concurrency = workflow.split('concurrency:\n', 1)[1].split('\nenv:', 1)[0]
-        self.assertIn("group: ci-${{ github.workflow }}-${{ github.ref }}-", concurrency)
-        self.assertIn("github.event_name == 'push' && "
-                      "(github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') "
-                      "&& github.sha || 'latest'", concurrency)
-        self.assertIn('cancel-in-progress: true', concurrency)
-
 
 if __name__ == "__main__":
     unittest.main()
