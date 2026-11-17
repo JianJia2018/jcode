@@ -128,8 +128,6 @@ class ReleaseCITests(unittest.TestCase):
         ])
         with self.assertRaises(gate.Rejected):
             self.authorize(FakeAPI(detail=run(conclusion="failure"), job_list=items), preview=True)
-        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-        self.assertIn("name: Security preflight (Linux)\n        if: ${{ !cancelled() && runner.os == 'Linux' }}", workflow)
 
     def test_preview_rejects_incomplete_or_malformed_step_evidence(self):
         for evidence in (None, [], [None], [dict(name="Check formatting", status="completed",
@@ -317,14 +315,6 @@ class ReleaseCITests(unittest.TestCase):
             with patch("sys.stderr"), self.assertRaises(SystemExit) as caught:
                 gate.main(argv)
             self.assertEqual(caught.exception.code, 2)
-
-    def test_job_names_match_actual_workflow(self):
-        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-        self.assertIn("name: Quality Guardrails", workflow)
-        self.assertIn("name: Build & Test (${{ matrix.os }})", workflow)
-        self.assertIn("os: [ubuntu-latest, macos-latest]", workflow)
-        self.assertIn("name: Build & Test (windows-latest)", workflow)
-        self.assertIn("name: Windows ARM64 Release Configuration", workflow)
 
 
 if __name__ == "__main__":

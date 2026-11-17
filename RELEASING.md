@@ -93,6 +93,19 @@ At the 2026-11-04 master integration, the branch was rebased directly onto upstr
 
 The 2026-11-08 integration rebases the four fork commits onto upstream `master` at `7c6975496` and records the contained publication `v1.0.0-preview.199`. The sync workflow now computes `git merge-base master "$latest_ref"` as its rebase boundary, excluding shared post-release commits instead of treating the publication marker as a baseline SHA. A regression executes the actual workflow script against disposable upstream/fork repositories and bare remotes, checking that the latest upstream badge and fork customization survive and that only the fork commit is replayed and pushed. All eight fork-release tests pass; the current-checkout script smoke prints `Already based on v1.0.0-preview.199`. Upstream removed `ios-testflight.yml`, so its obsolete disabled copy is not restored. This integration creates no release tag and keeps the fork package version at `0.99.3`; existing release tags and untracked `dist/` remain untouched.
 
+The 2026-11-17 stable fork build created `v1.0.1` but failed before packaging:
+the synchronized upstream master contained a `todos_updated` call whose mobile
+status implementation had been reverted. Remove that orphaned call, matching
+the upstream `v1.0.0` todo-event path, while preserving swarm progress and lane
+dispatch. The source marker does not exclude post-release upstream commits.
+Keep the failed tag immutable; rebuild with an explicit `upstream_tag=v1.0.0`
+dispatch to allocate the next unused patch version.
+
+Release recovery validation fetches the canonical `v0.96.0` and `v0.97.0` test
+tags explicitly: a fork's complete checkout cannot supply tags it never pushed.
+CI authorization tests exercise the gate's behavior rather than asserting text
+in the upstream CI workflow disabled by this fork.
+
 ## Normal release procedure
 
 1. Prepare and commit the version bump in `Cargo.toml`, `Cargo.lock`, and the changelog. Commit any source changes before preparing a cached fast-release binary.
