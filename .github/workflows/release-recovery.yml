@@ -40,6 +40,11 @@ jobs:
         with:
           # Recovery regressions exercise historical tags in isolated clones.
           fetch-depth: 0
+      - name: Fetch canonical recovery test tags
+        run: |
+          git fetch --no-tags https://github.com/1jehuang/jcode.git \
+            refs/tags/v0.96.0:refs/tags/v0.96.0 \
+            refs/tags/v0.97.0:refs/tags/v0.97.0
       - name: Test recovery, exact-commit authorization, public assets and watcher
         run: python3 -m unittest discover -s tests -p '*release*.py'
       - name: Test release preparation and announcements
