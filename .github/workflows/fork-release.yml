@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       upstream_tag:
-        description: "指定要同步并构建的上游版本（例如 v0.89.0 或 v1.0.0-preview.136）；留空则使用最新上游发布（含预览版）"
+        description: "指定上游正式版或 preview 标签（例如 v1.0.1 或 v1.0.0-preview.136）；留空则自动选择"
         required: false
         type: string
       force_build:
@@ -58,21 +58,32 @@ jobs:
           set -euo pipefail
           current_upstream="$(cat .github/upstream-version)"
           latest_upstream="${REQUESTED_UPSTREAM_TAG:-}"
+          release_tag_pattern='^v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-preview[.](0|[1-9][0-9]*))?([+][0-9A-Za-z-]+([.][0-9A-Za-z-]+)*)?$'
           if [ -z "$latest_upstream" ]; then
-            # --slurp 把全部分页汇总为一个外层数组（gh 不允许与 --jq 同用），
-            # 再由 Python 统一取 published_at 最新者：包含 prerelease、排除 draft，
-            # 不依赖 API 返回顺序或第一页。
+            # 跨页按发布时间选择正式版或 preview；selfdev 构建不是发布基线。
             latest_upstream="$(gh api repos/1jehuang/jcode/releases --paginate --slurp | python3 -c '
           import json
+          import re
           import sys
 
-          pages = json.load(sys.stdin)
-          releases = [release for page in pages for release in page if release.get("published_at") and not release.get("draft")]
+          tag_pattern = re.compile(sys.argv[1])
+          releases = [
+              release
+              for page in json.load(sys.stdin)
+              for release in page
+              if release.get("published_at")
+              and not release.get("draft")
+              and tag_pattern.fullmatch(release["tag_name"])
+          ]
           print(max(releases, key=lambda release: release["published_at"])["tag_name"] if releases else "")
-          ')"
+          ' "$release_tag_pattern")"
           fi
           if [ -z "$latest_upstream" ]; then
             echo "Could not determine the latest upstream release" >&2
+            exit 1
+          fi
+          if [[ ! "$latest_upstream" =~ $release_tag_pattern ]]; then
+            printf 'Unsupported upstream release tag: %s (expected stable or preview)\n' "$latest_upstream" >&2
             exit 1
           fi
 
