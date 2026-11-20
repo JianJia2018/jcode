@@ -89,9 +89,8 @@ jobs:
 
           if [ "$current_upstream" = "$latest_upstream" ] && [ "${FORCE_BUILD:-false}" != true ]; then
             # 同步标记只代表源码基线；只有对应版本的完整发布存在时才跳过。
-            published="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --slurp | python3 - "$latest_upstream" 3<&0 <<'PY'
+            published="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --slurp | python3 -c '
           import json
-          import os
           from pathlib import Path
           import re
           import sys
@@ -107,8 +106,7 @@ jobs:
               parts = version.split(".")
               matches = len(parts) == 3 and all(part.isdigit() for part in parts)
               matches = matches and tuple(map(int, parts[:2])) == base[:2] and int(parts[2]) > base[2]
-          with os.fdopen(3) as response:
-              releases = [release for page in json.load(response) for release in page]
+          releases = [release for page in json.load(sys.stdin) for release in page]
           required = {"jcode-windows-x86_64.exe", "jcode-windows-x86_64.zip"}
           published = any(
               release.get("tag_name") == "v" + version and release.get("published_at")
@@ -119,8 +117,7 @@ jobs:
               for release in releases
           )
           print("true" if matches and published else "false")
-          PY
-            )"
+          ' "$latest_upstream")"
             if [ "$published" = true ]; then
               echo "Already published Windows assets for $latest_upstream"
               exit 0
