@@ -191,6 +191,7 @@ class SyncWorkflowTests(unittest.TestCase):
                     [release("v0.99.1", "2026-10-18T12:00:00Z"),
                      release("v1.0.0-preview.135", "2026-10-21T12:00:00Z", prerelease=True)],
                     [release("v99.0.0", "2026-11-01T12:00:00Z", draft=True),
+                     release("selfdev-linux-18b502c", "2026-11-02T12:00:00Z", prerelease=True),
                      release("v1.0.0-preview.136", "2026-10-26T12:00:00Z", prerelease=True),
                      release("v0.98.0", "2026-09-01T12:00:00Z")],
                 ],
@@ -201,6 +202,7 @@ class SyncWorkflowTests(unittest.TestCase):
                     [release("v1.0.0-preview.136", "2026-10-26T12:00:00Z", prerelease=True),
                      release("v90.0.0", None)],
                     [release("v1.0.0", "2026-10-28T12:00:00Z"),
+                     release("selfdev-linux-18b502c", "2026-11-02T12:00:00Z", prerelease=True),
                      release("v91.0.0", "2026-11-01T12:00:00Z", draft=True),
                      release("v0.99.1", "2026-10-18T12:00:00Z")],
                 ],
@@ -212,6 +214,14 @@ class SyncWorkflowTests(unittest.TestCase):
                 outcome = self.run_sync(pages=pages)
                 self.assert_selected(outcome, upstream, fork_tag)
                 self.assertEqual(outcome["gh"], ["api"])
+
+    def test_requested_selfdev_tag_is_rejected_before_git(self):
+        outcome = self.run_sync(requested="selfdev-linux-18b502c")
+        self.assertNotEqual(outcome["result"].returncode, 0)
+        self.assertIn("Unsupported upstream release tag", outcome["result"].stderr)
+        self.assertEqual(outcome["gh"], [])
+        self.assertEqual(outcome["git"], [])
+        self.assertEqual(outcome["output"], "")
 
     def test_no_published_non_draft_release_fails_before_git_or_output(self):
         outcome = self.run_sync(pages=[[release("v1.0.0", None),
