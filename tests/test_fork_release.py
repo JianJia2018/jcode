@@ -115,6 +115,7 @@ print(json.dumps(pages))
 }
 git() {
     case "${1-}" in
+        -c) shift 2; git "$@" ;;
         rev-parse)
             if [ "${2-}" = origin/master ]; then
                 printf '%040d\n' 0
@@ -309,6 +310,7 @@ class RebaseWorkflowTests(unittest.TestCase):
             git("init", "--bare", str(origin), cwd=root)
             git("init", "-b", "master", str(repo), cwd=root)
             git("config", "user.name", "Fixture")
+            git("config", "core.autocrlf", "false")
             git("config", "user.email", "fixture@example.invalid")
             (repo / "Cargo.toml").write_text(
                 '[package]\nname = "jcode"\nversion = "0.99.1"\n', encoding="utf-8")
@@ -316,6 +318,9 @@ class RebaseWorkflowTests(unittest.TestCase):
                 '[[package]]\nname = "jcode"\nversion = "0.99.1"\n', encoding="utf-8")
             badge = repo / "downloads.json"
             badge.write_text('"old release"\n', encoding="utf-8")
+            notes = repo / "RELEASING.md"
+            notes.write_text("upstream instructions\n\none\n\ntwo\n\nfork history\n",
+                             encoding="utf-8")
             git("add", ".")
             git("commit", "-m", "old upstream release")
             git("tag", "v1.0.0-preview.136")
@@ -329,11 +334,29 @@ class RebaseWorkflowTests(unittest.TestCase):
             (repo / "custom.txt").write_text("keep fork customization\n", encoding="utf-8")
             git("add", ".")
             git("commit", "-m", "fork customization")
+            for version in ("0.99.2", "0.99.3"):
+                for filename in ("Cargo.toml", "Cargo.lock"):
+                    path = repo / filename
+                    text = path.read_text(encoding="utf-8")
+                    text = re.sub(r'version = "[^"]+"', f'version = "{version}"', text)
+                    path.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+                text = notes.read_text(encoding="utf-8") + f"fork version {version}\n"
+                notes.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+                git("add", ".")
+                git("commit", "-m", f"fork version {version}")
             git("remote", "add", "origin", str(origin))
             git("push", "-u", "origin", "master")
 
             git("checkout", "upstream-base")
             badge.write_text('"latest upstream update"\n', encoding="utf-8")
+            (repo / ".gitattributes").write_text("* text=auto\n", encoding="utf-8")
+            for filename in ("Cargo.toml", "Cargo.lock"):
+                path = repo / filename
+                text = path.read_text(encoding="utf-8").replace('"0.99.1"', '"1.1.0"')
+                path.write_text(text + "# preserve upstream metadata\n", encoding="utf-8")
+            notes.write_text("latest upstream instructions\n\none\n\ntwo\n\nfork history\n",
+                             encoding="utf-8")
+            git("add", ".")
             git("commit", "-am", "latest upstream badge update")
             git("tag", "v1.0.0-preview.199")
             git("push", str(upstream), "--tags")
@@ -355,7 +378,14 @@ class RebaseWorkflowTests(unittest.TestCase):
                              '"latest upstream update"')
             self.assertEqual(git("show", "master:custom.txt"), "keep fork customization")
             self.assertEqual(git("log", "--format=%s", "v1.0.0-preview.199..master"),
-                             "fork customization")
+                             "fork version 0.99.3\nfork version 0.99.2\nfork customization")
+            self.assertEqual(git("show", "master:RELEASING.md"),
+                             "latest upstream instructions\n\none\n\ntwo\n\nfork history\n"
+                             "fork version 0.99.2\nfork version 0.99.3")
+            for filename in ("Cargo.toml", "Cargo.lock"):
+                content = git("show", f"master:{filename}")
+                self.assertIn('version = "1.0.0-preview.199.fork.1"', content)
+                self.assertIn("# preserve upstream metadata", content)
             self.assertEqual(git("rev-parse", "master"),
                              git("rev-parse", "refs/heads/master", cwd=origin))
             self.assertEqual(git("show", "master:.github/upstream-version"),

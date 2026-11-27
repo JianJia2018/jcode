@@ -129,22 +129,36 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           expected_master="$(git rev-parse origin/master)"
           latest_ref="refs/upstream-tags/$latest_upstream"
-          git fetch https://github.com/1jehuang/jcode.git "refs/tags/$latest_upstream:$latest_ref"
+          git fetch --no-tags https://github.com/1jehuang/jcode.git "refs/tags/$latest_upstream:$latest_ref"
 
+          # 旧 fork 提交含整文件 CRLF 改写；先规范化，避免无语义的文档冲突。
           # 发布标记不一定是 master 的实际基线；排除双方已共享的上游提交。
           rebase_base="$(git merge-base master "$latest_ref")"
-          if ! git rebase --onto "$latest_ref" "$rebase_base" master; then
-            conflicts="$(git diff --name-only --diff-filter=U | sort)"
-            expected="$(printf 'Cargo.lock\nCargo.toml')"
-            if [ "$conflicts" != "$expected" ]; then
-              echo "Unexpected rebase conflicts:" >&2
-              printf '%s\n' "$conflicts" >&2
-              git rebase --abort
-              exit 1
-            fi
-            git checkout --ours -- Cargo.toml Cargo.lock
-            git add Cargo.toml Cargo.lock
-            GIT_EDITOR=true git rebase --continue
+          if ! git -c merge.renormalize=true rebase --onto "$latest_ref" "$rebase_base" master; then
+            while true; do
+              mapfile -t conflicts < <(git diff --name-only --diff-filter=U)
+              if [ "${#conflicts[@]}" -eq 0 ]; then
+                echo "Rebase failed without resolvable version conflicts" >&2
+                git rebase --abort
+                exit 1
+              fi
+              for path in "${conflicts[@]}"; do
+                case "$path" in
+                  Cargo.toml|Cargo.lock) ;;
+                  *)
+                    echo "Unexpected rebase conflict: $path" >&2
+                    git rebase --abort
+                    exit 1
+                    ;;
+                esac
+              done
+              # 每个历史版本提交都可能冲突；保留新基线，最后统一写 fork 版本。
+              git checkout --ours -- "${conflicts[@]}"
+              git add -- "${conflicts[@]}"
+              if GIT_EDITOR=true git -c merge.renormalize=true rebase --continue; then
+                break
+              fi
+            done
           fi
 
           release_tag="$(python3 - "$latest_upstream" <<'PY'
