@@ -149,6 +149,12 @@ Fetch only the selected release ref with `--no-tags`; do not import unrelated
 `selfdev-*` tags. Discovery and manual selection remain restricted to published
 `v`-prefixed stable/preview version tags.
 
+The repaired remote rebase completed, but GitHub rejected its atomic push because
+the default Actions token cannot update upstream workflow files. With explicit
+authorization, the fork is rebased locally onto the exact `v1.1.2` tag, records
+that baseline, and prepares the unused fork release `v1.1.3`. No Actions secret
+is added; future releases that change workflows still require an authorized
+local synchronization or a separately configured workflow-capable credential.
 
 ## Normal release procedure
 
