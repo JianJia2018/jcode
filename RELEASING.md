@@ -139,6 +139,17 @@ tags explicitly: a fork's complete checkout cannot supply tags it never pushed.
 CI authorization tests exercise the gate's behavior rather than asserting text
 in the upstream CI workflow disabled by this fork.
 
+The 2026-11-27 scheduled synchronization selected the published `v1.1.2` release,
+but failed while replaying historical fork version commits. Earlier Windows
+edits had committed whole-file CRLF changes; use `merge.renormalize=true` during
+rebase so those changes do not create spurious documentation conflicts. Resolve
+successive Cargo version conflicts in a loop, keeping the new upstream baseline
+before writing the final fork version. Any other conflict still aborts the sync.
+Fetch only the selected release ref with `--no-tags`; do not import unrelated
+`selfdev-*` tags. Discovery and manual selection remain restricted to published
+`v`-prefixed stable/preview version tags.
+
+
 ## Normal release procedure
 
 1. Prepare and commit the version bump in `Cargo.toml`, `Cargo.lock`, and the changelog. Commit any source changes before preparing a cached fast-release binary.
